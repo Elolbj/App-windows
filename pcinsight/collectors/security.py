@@ -51,6 +51,8 @@ def collect() -> dict:
     raw = run_script("security", timeout=60)
     av = []
     for a in as_list(raw.get("antivirus")):
+        if not a.get("name"):
+            continue  # entrée vide renvoyée par certaines éditions (Windows Server)
         av.append({"name": a.get("name"), **decode_av_state(a.get("state"))})
 
     firewall = []

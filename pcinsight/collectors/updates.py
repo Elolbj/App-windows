@@ -61,7 +61,7 @@ def hresult_info(hr) -> dict:
     return {"hex": f"0x{code:08X}", "label": HRESULTS.get(code)}
 
 
-def summarize(history: list, now=None) -> dict:
+def summarize(history: list, now=None, hotfixes=None) -> dict:
     now = now or dt.datetime.now()
     ok = [h for h in history if h["result"] in (2, 3)]
     failed = [h for h in history if h["result"] in (4, 5)]
@@ -100,8 +100,16 @@ def summarize(history: list, now=None) -> dict:
     unresolved = [h for h in recent_failed
                   if last_ok.get(h.get("kb") or h.get("title"), "") < (h.get("date") or "")]
 
+    # Repli : date du dernier correctif KB (Get-HotFix), utile quand l'historique
+    # Windows Update a été vidé ou que les mises à jour sont installées hors WU.
+    hf_dates = [h.get("installedOn") for h in (hotfixes or []) if h.get("installedOn")]
+    last_hotfix = max(hf_dates) if hf_dates else None
+    days_since_hotfix = (now - dt.datetime.fromisoformat(last_hotfix)).days if last_hotfix else None
+
     return {
         "total": len(history),
+        "last_hotfix": last_hotfix,
+        "days_since_hotfix": days_since_hotfix,
         "succeeded": len(ok),
         "failed": len(failed),
         "success_rate": round(100 * len(ok) / len(history), 1) if history else None,
@@ -138,7 +146,7 @@ def collect() -> dict:
         "history": history,
         "hotfixes": hotfixes,
         "total_history": raw.get("total") or len(history),
-        "stats": summarize(history),
+        "stats": summarize(history, hotfixes=hotfixes),
         "errors": as_list(raw.get("errors")),
     }
 

@@ -23,7 +23,9 @@ export default {
       <div class="grid cols-6">
         ${tile("Version de Windows", w.display_version || "—", { ico: "updates", hint: `${w.product || ""} · build ${w.build || "?"}` })}
         ${tile("Fin du support", sup.known ? fmtDate(sup.end) : "—", { hint: sup.known ? (sup.supported ? `dans ${fmtNum(sup.days_left)} jours` : "dépassée : plus de correctifs") : "non déterminée" })}
-        ${tile("Dernière cumulative", st.last_quality ? fmtAgo(st.last_quality) : "—", { hint: st.last_quality ? fmtDate(st.last_quality) : "aucune dans l'historique" })}
+        ${st.last_quality || !st.last_hotfix
+          ? tile("Dernière cumulative", st.last_quality ? fmtAgo(st.last_quality) : "—", { hint: st.last_quality ? fmtDate(st.last_quality) : "aucune dans l'historique" })
+          : tile("Dernier correctif", fmtAgo(st.last_hotfix), { hint: `KB installé le ${fmtDate(st.last_hotfix)}` })}
         ${tile("Taux de réussite", fmtPct(st.success_rate, 1), { hint: `${fmtNum(st.failed)} échec(s) sur ${fmtNum(st.total)}` })}
         ${tile("Échecs non résolus", fmtNum(st.unresolved_failed.length), { hint: "30 derniers jours" })}
         ${tile("Redémarrage en attente", sys.reboot_pending.length ? "Oui" : "Non", { hint: sys.reboot_pending.join(", ") || "rien en attente" })}

@@ -158,3 +158,12 @@ def test_analysis_ram_rules():
 def test_analysis_without_data():
     res = analysis.analyze({})
     assert res["score"] is None and res["findings"] == []
+
+
+def test_updates_hotfix_fallback():
+    now = dt.datetime(2026, 11, 22, 12)
+    st = updates.summarize([], now, hotfixes=[{"id": "KB1", "installedOn": "2026-08-01T00:00:00"},
+                                              {"id": "KB2", "installedOn": None}])
+    assert st["last_hotfix"] == "2026-08-01T00:00:00" and st["days_since_hotfix"] == 113
+    res = analysis.analyze({"updates": {"stats": st}})
+    assert any(f["title"] == "Windows n'est plus mis à jour" and "correctif" in f["detail"] for f in res["findings"])

@@ -243,7 +243,7 @@ def updates():
     hotfixes = [{"id": h["kb"], "description": "Security Update", "installedOn": h["date"]}
                 for h in enriched if h["kb"] and "cumulative" in h["title"].lower() and h["result"] == 2][:12]
     return {"history": enriched, "hotfixes": hotfixes, "total_history": len(enriched),
-            "stats": up_mod.summarize(enriched), "errors": []}
+            "stats": up_mod.summarize(enriched, hotfixes=hotfixes), "errors": []}
 
 
 def updates_pending():

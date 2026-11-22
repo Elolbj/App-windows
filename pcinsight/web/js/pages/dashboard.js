@@ -85,7 +85,10 @@ export default {
     ctx.api.section("updates").then(({ data }) => {
       if (!ctx.alive()) return;
       const lq = data.stats.last_quality;
-      setTile("t-update", lq ? fmtAgo(lq) : "—", lq ? `Cumulative du ${fmtDate(lq)}` : "Aucune mise à jour cumulative");
+      const hf = data.stats.last_hotfix;
+      if (lq) setTile("t-update", fmtAgo(lq), `Cumulative du ${fmtDate(lq)}`);
+      else if (hf) setTile("t-update", fmtAgo(hf), `Dernier correctif le ${fmtDate(hf)}`);
+      else setTile("t-update", "—", "Aucune mise à jour cumulative");
     }).catch(() => setTile("t-update", "—", "indisponible"));
 
     Promise.all([ctx.api.section("system"), ctx.api.section("hardware").catch(() => null)]).then(([s, h]) => {

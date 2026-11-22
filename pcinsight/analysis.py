@@ -336,20 +336,23 @@ def check_updates(r: Report, system, updates):
     if updates:
         st = updates["stats"]
         days = st.get("days_since_quality")
+        what = "mise à jour cumulative"
+        if days is None and st.get("days_since_hotfix") is not None:
+            days, what = st["days_since_hotfix"], "correctif (KB)"
         if days is None:
             if st.get("total"):
                 r.add("updates", "info", "Aucune mise à jour cumulative dans l'historique",
                       "L'historique Windows Update ne contient pas de mise à jour cumulative.")
         elif days > 60:
             r.add("updates", "critical", "Windows n'est plus mis à jour",
-                  f"Dernière mise à jour cumulative installée il y a {days} jours.",
+                  f"Dernier {what} installé il y a {days} jours.",
                   "Paramètres > Windows Update > Rechercher des mises à jour.")
         elif days > 40:
             r.add("updates", "warning", "Mises à jour en retard",
-                  f"Dernière mise à jour cumulative il y a {days} jours (Microsoft en publie une par mois).",
+                  f"Dernier {what} installé il y a {days} jours (Microsoft en publie un par mois).",
                   "Paramètres > Windows Update > Rechercher des mises à jour.")
         else:
-            r.add("updates", "good", "Windows à jour", f"Dernière mise à jour cumulative il y a {days} jours.")
+            r.add("updates", "good", "Windows à jour", f"Dernier {what} installé il y a {days} jours.")
         unresolved = st.get("unresolved_failed") or []
         if unresolved:
             codes = ", ".join(sorted({u["error"]["hex"] for u in unresolved if u["error"]["hex"]}))
