@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>PC Insight</title>
+  <link rel="stylesheet" href="css/app.css">
+  <script src="vendor/chart.umd.min.js"></script>
+  <script type="module" src="js/main.js"></script>
+</head>
+<body>
+  <div class="app">
+    <aside class="sidebar">
+      <div class="brand"><span class="brand-logo" id="brand-logo"></span>PC Insight</div>
+      <nav class="nav" id="nav"></nav>
+      <div class="side-footer">
+        <div id="side-status"></div>
+        <button class="btn ghost" id="theme-toggle" type="button"></button>
+        <div class="meta" id="meta"></div>
+      </div>
+    </aside>
+    <main>
+      <header class="topbar">
+        <div>
+          <h1 id="page-title">Chargement…</h1>
+          <p id="page-subtitle"></p>
+        </div>
+        <div class="actions" id="page-actions"></div>
+      </header>
+      <div class="view" id="view"></div>
+    </main>
+  </div>
+</body>
+</html>

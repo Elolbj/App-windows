@@ -1,0 +1,52 @@
+name: Windows
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test-and-build:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    env:
+      PYTHONUTF8: "1"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Dépendances
+        run: python -m pip install -r requirements-dev.txt
+
+      - name: Tests unitaires
+        run: python -m pytest -q
+
+      - name: Auto-test des collecteurs sur un vrai Windows
+        run: python -m pcinsight --selftest --out selftest.json
+
+      - name: Construction de l'exécutable
+        run: python -m PyInstaller --noconfirm --clean --windowed --name PCInsight --add-data "pcinsight/web;pcinsight/web" --add-data "pcinsight/scripts;pcinsight/scripts" main.py
+
+      - name: Auto-test de l'exécutable
+        shell: pwsh
+        run: |
+          $p = Start-Process -FilePath dist\PCInsight\PCInsight.exe -ArgumentList '--selftest', '--out', "$PWD\selftest-exe.json" -Wait -PassThru
+          if (Test-Path selftest-exe.json) { Get-Content selftest-exe.json -Raw | ConvertFrom-Json | Select-Object windows, failures, server | ConvertTo-Json -Depth 4 }
+          if ($p.ExitCode -ne 0) { throw "Auto-test de l'exécutable en échec (code $($p.ExitCode))" }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: PCInsight-windows
+          path: dist/PCInsight
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: selftest
+          path: selftest*.json
