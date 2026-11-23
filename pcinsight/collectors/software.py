@@ -160,8 +160,9 @@ def scheduled_tasks() -> dict:
     for t in as_list(raw.get("tasks")):
         trig = []
         for name in as_list(t.get("triggers")):
-            key = str(name).replace("MSFT_Task", "").replace("Trigger", "")
-            trig.append(TRIGGERS.get(key, key))
+            key = str(name or "").replace("MSFT_Task", "").replace("Trigger", "")
+            if key:
+                trig.append(TRIGGERS.get(key, key))
         last = t.get("lastRun")
         tasks.append({
             **t,

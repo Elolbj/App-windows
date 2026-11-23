@@ -1,5 +1,6 @@
 """Informations système complémentaires : activation, alimentation, démarrage, firmware."""
 
+import ctypes
 import datetime as dt
 import os
 import re
@@ -62,9 +63,21 @@ def minidumps() -> list:
     return sorted(out, key=lambda x: x["time"], reverse=True)[:30]
 
 
+def firmware_type():
+    """1 = BIOS hérité, 2 = UEFI. API GetFirmwareType (Windows 8+), repli sur le registre."""
+    if IS_WINDOWS:
+        try:
+            value = ctypes.c_int(0)
+            if ctypes.windll.kernel32.GetFirmwareType(ctypes.byref(value)):
+                return value.value
+        except (AttributeError, OSError):
+            pass
+    return reg_value(HKLM, r"SYSTEM\CurrentControlSet\Control", "PEFirmwareType", None, VIEW_64)
+
+
 def registry_info() -> dict:
     power = r"SYSTEM\CurrentControlSet\Control\Session Manager\Power"
-    firmware = reg_value(HKLM, r"SYSTEM\CurrentControlSet\Control", "PEFirmwareType", None, VIEW_64)
+    firmware = firmware_type()
     return {
         "fast_startup": None if (v := reg_value(HKLM, power, "HiberbootEnabled", None, VIEW_64)) is None else v == 1,
         "hibernation": None if (v := reg_value(HKLM, r"SYSTEM\CurrentControlSet\Control\Power", "HibernateEnabled", None, VIEW_64)) is None else v == 1,
