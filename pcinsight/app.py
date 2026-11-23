@@ -11,10 +11,12 @@ import webbrowser
 from . import APP_NAME, __version__
 from .api import TTL, Api, build_collectors, storage_snapshot_loop
 from .collectors.performance import Sampler
+from .collectors.sensors import SensorHub
 from .history import History
 from .server import AppServer
+from .settings import Settings
 from .store import Store
-from .winutil import HKCU, app_data_dir, reg_value, resource_dir
+from .winutil import HKCU, IS_WINDOWS, app_data_dir, reg_value, resource_dir
 
 log = logging.getLogger("pcinsight")
 
@@ -48,7 +50,10 @@ def run_collector_only():
     """Mode --collect : à lancer à l'ouverture de session (Planificateur de tâches)
     pour avoir un historique de performances même quand la fenêtre est fermée."""
     history = History(app_data_dir() / "history.db")
-    sampler = Sampler(interval=5.0, on_sample=history.add)
+    hub = SensorHub(Settings(app_data_dir() / "settings.json"), interval=10.0)
+    sampler = Sampler(interval=5.0, on_sample=history.add, sensor_value=hub.value)
+    hub.counters_source = sampler.last_counters
+    hub.start()
     stop = threading.Event()
     signal.signal(signal.SIGINT, lambda *_: stop.set())
     signal.signal(signal.SIGTERM, lambda *_: stop.set())
@@ -97,8 +102,16 @@ def main(argv=None):
     if args.collect:
         return run_collector_only()
 
+    demo_mode = args.demo or not IS_WINDOWS
+    settings = Settings(app_data_dir() / "settings.json")
     history = History(app_data_dir() / "history.db")
-    sampler = Sampler(interval=2.0, on_sample=history.add)
+    hub = SensorHub(settings, demo=demo_mode)
+    counters_factory = None
+    if not IS_WINDOWS:
+        from .demo import DemoCounters
+        counters_factory = DemoCounters
+    sampler = Sampler(interval=2.0, on_sample=history.add, sensor_value=hub.value, counters_factory=counters_factory)
+    hub.counters_source = sampler.last_counters
     store = Store(build_collectors(args.demo), TTL)
     stop = threading.Event()
 
@@ -111,10 +124,11 @@ def main(argv=None):
         except Exception:
             pass
 
-    api = Api(store, sampler, history, demo_mode=args.demo, on_quit=quit_app)
+    api = Api(store, sampler, history, demo_mode=args.demo, on_quit=quit_app, hub=hub, settings=settings)
     server = AppServer(api, resource_dir() / "web", port=args.port)
     server.start()
     sampler.start()
+    hub.start()
     store.prefetch()
     threading.Thread(target=storage_snapshot_loop, args=(history, stop), daemon=True).start()
     log.info("%s %s sur http://127.0.0.1:%s (démo=%s)", APP_NAME, __version__, server.port, api.demo)
@@ -131,6 +145,7 @@ def main(argv=None):
         pass
     finally:
         stop.set()
+        hub.stop()
         sampler.stop()
         sampler.join(timeout=5)
         history.close()

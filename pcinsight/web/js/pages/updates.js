@@ -1,5 +1,7 @@
 import { bars, colors, legend } from "../charts.js";
-import { DataTable, badge, card, errorBox, fmtAgo, fmtBytes, fmtDate, fmtDateTime, fmtNum, fmtPct, html, icon, loading, raw, scriptNotes, setHTML, tile, toast } from "../ui.js";
+import {
+  DataTable, badge, card, errorBox, fmtAgo, fmtBytes, fmtDate, fmtDateTime, fmtNum, fmtPct, html, icon, loading, raw, scriptNotes, setHTML, summary, tile, toast,
+} from "../ui.js";
 
 const RESULT_KIND = { 2: "good", 3: "warning", 4: "critical", 5: "warning", 1: "info" };
 
@@ -19,7 +21,14 @@ export default {
     const sup = w.support || {};
     const c = colors();
 
+    const daysQ = st.days_since_quality ?? st.days_since_hotfix;
     setHTML(view, html`
+      ${summary([
+        sup.known ? { kind: sup.supported ? (sup.days_left <= 90 ? "warning" : "good") : "critical", title: sup.supported ? `${w.product} ${w.display_version || ""} est pris en charge` : "Version de Windows plus prise en charge", text: sup.supported ? `Correctifs de sécurité jusqu'au ${fmtDate(sup.end)}.` : `Plus de correctifs depuis le ${fmtDate(sup.end)} : passez à une version récente via Windows Update.` }
+          : { kind: "info", title: w.product || "Version de Windows", text: "Date de fin de support non référencée pour cette édition." },
+        daysQ !== null && daysQ !== undefined ? { kind: daysQ > 60 ? "critical" : daysQ > 40 ? "warning" : "good", title: daysQ > 40 ? "Mises à jour en retard" : "Windows est à jour", text: `Dernier correctif installé il y a ${daysQ} jour(s). Microsoft publie un correctif de sécurité chaque 2e mardi du mois.` } : null,
+        { kind: st.unresolved_failed.length ? "warning" : "good", title: st.unresolved_failed.length ? `${st.unresolved_failed.length} échec(s) à traiter` : "Aucun échec récent non résolu", text: sys.reboot_pending.length ? `Redémarrage en attente (${sys.reboot_pending.join(", ")}).` : "" },
+      ])}
       <div class="grid cols-6">
         ${tile("Version de Windows", w.display_version || "—", { ico: "updates", hint: `${w.product || ""} · build ${w.build || "?"}` })}
         ${tile("Fin du support", sup.known ? fmtDate(sup.end) : "—", { hint: sup.known ? (sup.supported ? `dans ${fmtNum(sup.days_left)} jours` : "dépassée : plus de correctifs") : "non déterminée" })}

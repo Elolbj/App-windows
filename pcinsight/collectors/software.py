@@ -112,11 +112,24 @@ def startup_items() -> list:
     return sorted(unique.values(), key=lambda i: i["name"].lower())
 
 
+def is_third_party(binpath: str) -> bool:
+    """Service dont l'exécutable n'est pas dans le dossier Windows (logiciel installé)."""
+    p = (binpath or "").lower().replace('"', "")
+    windir = os.environ.get("SystemRoot", r"C:\Windows").lower()
+    system_prefixes = (windir, "%systemroot%", "%windir%", "\\systemroot\\", "system32\\")
+    # les composants Microsoft hors du dossier Windows (Defender, Edge, Office) ne sont pas « tiers »
+    return bool(p) and not p.startswith(system_prefixes) and "\\microsoft" not in p
+
+
 def services() -> list:
     if not IS_WINDOWS:
         return []
     out = []
     for s in psutil.win_service_iter():
+        try:
+            binpath = s.binpath()
+        except (psutil.Error, OSError):
+            binpath = ""
         try:
             out.append({
                 "name": s.name(),
@@ -124,10 +137,41 @@ def services() -> list:
                 "status": s.status(),
                 "start_type": s.start_type(),
                 "user": s.username(),
+                "binpath": binpath,
+                "third_party": is_third_party(binpath),
             })
         except (psutil.Error, OSError):
             continue
     return sorted(out, key=lambda s: s["display_name"].lower())
+
+
+TRIGGERS = {"Logon": "À l'ouverture de session", "Boot": "Au démarrage", "Time": "Une fois", "Daily": "Quotidien",
+            "Weekly": "Hebdomadaire", "Monthly": "Mensuel", "Idle": "Inactivité", "Event": "Sur événement",
+            "Registration": "À la création", "SessionStateChange": "Changement de session"}
+
+
+def scheduled_tasks() -> dict:
+    """Tâches planifiées hors \\Microsoft\\ : un emplacement classique pour la persistance."""
+    try:
+        raw = run_script("tasks", timeout=90)
+    except Exception as exc:
+        return {"tasks": [], "errors": [str(exc)]}
+    tasks = []
+    for t in as_list(raw.get("tasks")):
+        trig = []
+        for name in as_list(t.get("triggers")):
+            key = str(name).replace("MSFT_Task", "").replace("Trigger", "")
+            trig.append(TRIGGERS.get(key, key))
+        last = t.get("lastRun")
+        tasks.append({
+            **t,
+            "actions": as_list(t.get("actions")),
+            "triggers": trig,
+            "lastRun": last if last and last >= "2001" else None,  # 1999-11-30 = jamais exécutée
+            "elevated": t.get("runLevel") == "Highest",
+        })
+    tasks.sort(key=lambda t: (t.get("path") or "") + (t.get("name") or ""))
+    return {"tasks": tasks, "errors": as_list(raw.get("errors"))}
 
 
 def store_apps() -> dict:
@@ -160,6 +204,7 @@ def summarize(programs: list, startup: list, svc: list) -> dict:
         "services_status": status.most_common(),
         "services_start": start_types.most_common(),
         "auto_stopped": sum(1 for s in svc if s["start_type"] == "automatic" and s["status"] == "stopped"),
+        "third_party_services": sum(1 for s in svc if s.get("third_party")),
     }
 
 
@@ -170,11 +215,13 @@ def collect() -> dict:
     startup = startup_items()
     svc = services()
     store = store_apps()
+    tasks = scheduled_tasks()
     return {
         "programs": programs,
         "startup": startup,
         "services": svc,
         "store": store["apps"],
+        "tasks": tasks["tasks"],
         "stats": summarize(programs, startup, svc),
-        "errors": store["errors"],
+        "errors": store["errors"] + tasks["errors"],
     }

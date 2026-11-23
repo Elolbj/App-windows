@@ -42,6 +42,30 @@ const crosshair = {
   },
 };
 
+// Valeur écrite au bout de chaque barre horizontale (lecture directe, sans survol)
+const valueLabels = {
+  id: "valueLabels",
+  afterDatasetsDraw(chart, _args, opts) {
+    if (!opts || !opts.enabled) return;
+    const ctx = chart.ctx;
+    const c = colors();
+    ctx.save();
+    ctx.font = `600 12px ${getComputedStyle(document.body).fontFamily}`;
+    ctx.fillStyle = c.text2;
+    ctx.textBaseline = "middle";
+    chart.data.datasets.forEach((ds, di) => {
+      const meta = chart.getDatasetMeta(di);
+      if (meta.hidden) return;
+      meta.data.forEach((el, i) => {
+        const v = ds.data[i];
+        if (v === null || v === undefined) return;
+        ctx.fillText(opts.format ? opts.format(v) : fmtNum(v), el.x + 6, el.y);
+      });
+    });
+    ctx.restore();
+  },
+};
+
 let registered = false;
 export function applyTheme() {
   if (typeof Chart === "undefined") return;
@@ -61,7 +85,7 @@ export function applyTheme() {
   Chart.defaults.plugins.tooltip.boxPadding = 4;
   Chart.defaults.plugins.tooltip.usePointStyle = true;
   Chart.defaults.animation.duration = 250;
-  if (!registered) { Chart.register(crosshair); registered = true; }
+  if (!registered) { Chart.register(crosshair, valueLabels); registered = true; }
 }
 
 function scaleY({ max, min = 0, format, stacked = false, grid = true } = {}) {
@@ -122,7 +146,8 @@ export function timeLine(canvas, { series, yMax, yFormat, tooltipFormat, xFormat
  * Barres (verticales ou horizontales, éventuellement empilées).
  * datasets : [{ label, data, color | colors }]
  */
-export function bars(canvas, { labels, datasets, horizontal = false, stacked = false, format, max, maxTicks, onClick }) {
+export function bars(canvas, { labels, datasets, horizontal = false, stacked = false, format, max, maxTicks, onClick, values }) {
+  const showValues = values ?? (horizontal && !stacked && datasets.length === 1);
   const c = colors();
   const last = datasets.length - 1;
   return new Chart(canvas, {
@@ -143,12 +168,14 @@ export function bars(canvas, { labels, datasets, horizontal = false, stacked = f
     },
     options: {
       indexAxis: horizontal ? "y" : "x",
+      layout: { padding: { right: showValues ? 44 : 0 } },
       interaction: { mode: "index", intersect: false, axis: horizontal ? "y" : "x" },
       onClick,
       scales: horizontal
-        ? { x: scaleY({ format, stacked, max }), y: { ...scaleX({ stacked }), ticks: { color: c.text2, autoSkip: false, callback(v) { const l = this.getLabelForValue(v); return l.length > 24 ? l.slice(0, 23) + "…" : l; } } } }
+        ? { x: scaleY({ format, stacked, max }), y: { ...scaleX({ stacked }), ticks: { color: c.text2, autoSkip: false, callback(v) { const l = this.getLabelForValue(v); return l.length > 20 ? l.slice(0, 19) + "…" : l; } } } }
         : { x: scaleX({ stacked, maxTicks }), y: scaleY({ format, stacked, max }) },
       plugins: {
+        valueLabels: { enabled: showValues, format },
         tooltip: {
           callbacks: { label: (item) => ` ${item.dataset.label} : ${(format || fmtNum)(horizontal ? item.parsed.x : item.parsed.y)}` },
         },

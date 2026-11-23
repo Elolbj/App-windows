@@ -32,16 +32,24 @@ def _summary(name, data):
                               "temp": [(t["path"], t["size"]) for t in d.get("temp", [])]},
         "software": lambda d: {"programs": len(d.get("programs", [])), "startup": len(d.get("startup", [])),
                                "services": len(d.get("services", [])), "store": len(d.get("store", [])),
+                               "third_party_services": sum(1 for x in d.get("services", []) if x.get("third_party")),
+                               "tasks": [(t.get("path"), t.get("name"), t.get("triggers")) for t in d.get("tasks", [])[:6]],
                                "sample": [p["name"] for p in d.get("programs", [])[:5]]},
         "network": lambda d: {"interfaces": [i["name"] for i in d.get("interfaces", [])][:6],
                               "listening": len(d.get("connections", {}).get("listening", []))},
         "netconfig": lambda d: {"profiles": d.get("profiles"), "gateways": len(d.get("gateways") or [])},
         "security": lambda d: {"defender": d.get("defender"), "av": d.get("antivirus"), "firewall": d.get("firewall"),
-                               "registry": d.get("registry"), "users": len(d.get("users", []))},
+                               "registry": d.get("registry"), "users": len(d.get("users", [])),
+                               "exclusions": d.get("exclusions"), "hosts": d.get("hosts"), "proxy": d.get("proxy")},
         "events": lambda d: {"count": len(d.get("events", [])), "levels": d.get("stats", {}).get("levels"),
                              "top": d.get("stats", {}).get("top_sources", [])[:5],
                              "reliability_points": len(d.get("stats", {}).get("reliability", [])),
                              "sample_message": next((e.get("message") for e in d.get("events", []) if e.get("message")), None)},
+        "osinfo": lambda d: {"activation": d.get("activation"), "power": d.get("power"), "boots": d.get("boots", [])[-3:],
+                             "firmware": d.get("firmware"), "fast_startup": d.get("fast_startup"),
+                             "restore_points": len(d.get("restore_points") or []), "timezone": d.get("timezone")},
+        "drivers": lambda d: {"total": d.get("total"), "third_party": len(d.get("drivers", [])),
+                              "sample": [(x.get("device"), x.get("provider"), x.get("date")) for x in d.get("drivers", [])[:4]]},
         "updates": lambda d: {"history": len(d.get("history", [])), "hotfixes": len(d.get("hotfixes", [])),
                               "categories": d.get("stats", {}).get("by_category"),
                               "last_quality": d.get("stats", {}).get("last_quality")},
@@ -82,6 +90,29 @@ def run(out_path=None) -> int:
             report["sections"][name] = {"ok": False, "seconds": round(time.time() - start, 2), "error": repr(exc)}
             if IS_WINDOWS:
                 failures.append(name)
+
+    # compteurs PDH (charge GPU, fréquence réelle, disques) et capteurs
+    try:
+        from .collectors.counters import Counters
+        from .collectors.sensors import SensorHub
+        from .settings import MemorySettings
+        pdh = Counters()
+        time.sleep(1.2)
+        sample = pdh.sample()
+        pdh.close()
+        report["counters"] = {"available": pdh.available,
+                              "sample": {k: v for k, v in sample.items() if k not in ("gpus",)},
+                              "gpus": sample.get("gpus")}
+        hub = SensorHub(MemorySettings(), counters_source=lambda: sample)
+        snap = hub.poll()
+        report["sensors"] = {"sources": snap["sources"], "key": snap["key"], "nvidia": snap["nvidia"]}
+        data["counters"] = sample
+        data["sensors"] = snap["key"]
+        if IS_WINDOWS and not sample:
+            failures.append("counters")
+    except Exception as exc:
+        failures.append("counters")
+        report["counters"] = {"error": repr(exc)}
 
     try:
         report["processes"] = performance.processes()["total"]

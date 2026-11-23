@@ -3,6 +3,7 @@
 import re
 import socket
 import subprocess
+import unicodedata
 from collections import Counter
 
 import psutil
@@ -106,8 +107,44 @@ def connections() -> dict:
     }
 
 
+WIFI_KEYS = {  # libellé netsh normalisé (sans accents, minuscules) -> clé
+    "ssid": "ssid", "bssid": "bssid", "signal": "signal",
+    "type de radio": "radio", "radio type": "radio", "bande": "band", "band": "band",
+    "canal": "channel", "channel": "channel",
+    "debit de reception (mbits/s)": "rx_rate", "receive rate (mbps)": "rx_rate",
+    "debit de transmission (mbits/s)": "tx_rate", "transmit rate (mbps)": "tx_rate",
+    "authentification": "auth", "authentication": "auth", "chiffrement": "cipher", "cipher": "cipher",
+    "etat": "state", "state": "state", "description": "adapter",
+}
+
+
+def _normalize(text: str) -> str:
+    return unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode().strip().lower()
+
+
+def parse_netsh_wlan(text: str) -> dict:
+    info = {}
+    for line in text.splitlines():
+        if ":" not in line:
+            continue
+        key, _, value = line.partition(":")
+        k = WIFI_KEYS.get(_normalize(key))
+        if k and k not in info:
+            info[k] = value.strip()
+    if not info.get("ssid"):
+        return None
+    sig = re.search(r"(\d+)", info.get("signal", ""))
+    out = {"ssid": info["ssid"], "signal": int(sig.group(1)) if sig else None}
+    for k in ("bssid", "radio", "band", "channel", "auth", "cipher", "state", "adapter"):
+        out[k] = info.get(k)
+    for k in ("rx_rate", "tx_rate"):
+        m = re.search(r"[\d.,]+", info.get(k, ""))
+        out[k] = float(m.group(0).replace(",", ".")) if m else None
+    return out
+
+
 def wifi() -> dict:
-    """SSID et qualité du signal via netsh (les libellés SSID/Signal sont identiques en FR/EN)."""
+    """Connexion Wi-Fi active via netsh (libellés français ou anglais)."""
     if not IS_WINDOWS:
         return None
     try:
@@ -115,12 +152,7 @@ def wifi() -> dict:
                               stdin=subprocess.DEVNULL, timeout=10, creationflags=NO_WINDOW)
     except (OSError, subprocess.TimeoutExpired):
         return None
-    text = proc.stdout.decode("oem", errors="replace") if IS_WINDOWS else ""
-    ssid = re.search(r"^\s*SSID\s*:\s*(.+)$", text, re.M)
-    signal = re.search(r"^\s*Signal\s*:\s*(\d+)\s*%", text, re.M)
-    if not ssid:
-        return None
-    return {"ssid": ssid.group(1).strip(), "signal": int(signal.group(1)) if signal else None}
+    return parse_netsh_wlan(proc.stdout.decode("oem", errors="replace"))
 
 
 def config() -> dict:

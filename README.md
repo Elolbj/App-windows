@@ -4,18 +4,34 @@ Application Windows qui regroupe en un seul endroit les informations d'un PC : *
 
 ## Fonctionnalités
 
+Chaque page commence par un **résumé en langage clair** (vert = OK, orange = à surveiller, rouge = problème) ; les termes techniques ont une aide « ? » au survol, et la barre latérale signale les pages qui contiennent des problèmes.
+
 | Page | Contenu |
 |---|---|
-| Tableau de bord | Score de santé, tuiles CPU/RAM/disque/uptime/erreurs/mises à jour, activité en direct, points à surveiller |
-| Performances | Graphiques temps réel (CPU, RAM, disques, réseau, charge par cœur), **historique 1 h → 30 jours** (moyenne, pic, 95e centile, profil horaire), processus regroupés par application |
-| Matériel | CPU, GPU (VRAM réelle), barrettes de RAM (vitesse configurée vs nominale), carte mère/BIOS, écrans, batterie (usure), périphériques en erreur |
-| Stockage | Volumes et espace libre, disques physiques (SSD/HDD, NVMe/SATA, santé, température et usure en admin), évolution de l'espace utilisé, fichiers temporaires |
-| Logiciels | Programmes installés (registre 32/64 bits + utilisateur), applications du Store, programmes au démarrage (activés/désactivés), services ; graphiques éditeurs/taille/installations par mois |
-| Réseau | Interfaces, IP, passerelle, DNS, profil réseau (public/privé), Wi-Fi, débit en direct, **ports en écoute avec processus et exposition**, connexions TCP |
-| Sécurité | Defender/antivirus tiers, signatures, pare-feu, UAC, Secure Boot, BitLocker, SMBv1, RDP/NLA, HVCI, TPM, comptes locaux et administrateurs |
-| Événements | Critiques/erreurs/avertissements des journaux Système et Application (30 jours), par jour ou par heure, sources principales, écrans bleus et arrêts inattendus, plantages d'applications, **indice de stabilité Windows** |
-| Mises à jour | Historique Windows Update catégorisé, taux de réussite, échecs non résolus avec explication du code d'erreur, fin de support de votre version de Windows, recherche des mises à jour disponibles (sans rien installer) |
-| Diagnostic | Constats classés par gravité avec conseils, score par catégorie, **export d'un rapport HTML (imprimable en PDF) + JSON** dans `Documents\PC Insight` |
+| Tableau de bord | Score de santé, **à faire en priorité**, CPU/RAM/GPU/disque/réseau en direct (avec températures), protection, mises à jour, démarrage |
+| Diagnostic | Constats filtrables (problèmes / conseils / bons points), « Que faire » concret et lien vers la page concernée, export HTML (PDF) + JSON |
+| Performances | Temps réel : CPU (**fréquence réelle, turbo compris**), RAM, **charge GPU**, **activité et temps de réponse de chaque disque**, réseau, cœurs, détail mémoire (engagée, cache, pagination). Historique 1 h → 30 jours (CPU, RAM, GPU, températures, profil horaire). Processus regroupés avec leur emplacement |
+| Capteurs | Températures CPU/GPU/disques, puissance, ventilateurs, tensions, fréquences ; détail des moteurs GPU (3D, vidéo…) ; assistant d'installation de LibreHardwareMonitor |
+| Matériel | CPU, GPU (VRAM réelle), RAM (XMP/EXPO, double canal), carte mère/BIOS, écrans, batterie, périphériques en erreur, **pilotes tiers (version, date, signature)**, firmware, activation, mode d'alimentation, **durée des démarrages**, points de restauration |
+| Stockage | Volumes, santé/usure/température des disques, activité en direct, évolution de l'espace, fichiers temporaires |
+| Logiciels | Programmes installés, Store, démarrage, **tâches planifiées tierces**, services (filtre **services tiers** + exécutable) |
+| Sécurité | 13 points de contrôle expliqués (Defender, pare-feu, UAC, Secure Boot, BitLocker, SMBv1, RDP/NLA, HVCI, **protection LSA**, TPM…), **éléments de persistance suspects**, fichier hosts, proxy, exclusions Defender, comptes |
+| Réseau | Wi-Fi détaillé (bande, canal, norme, débits, chiffrement), IP, passerelle, DNS, profil, ports en écoute avec processus, connexions |
+| Événements | Erreurs par jour/heure, sources, écrans bleus, arrêts brutaux, plantages d'applications, indice de fiabilité, **durée et nombre de démarrages** |
+| Mises à jour | Historique catégorisé, échecs expliqués, fin de support de Windows, recherche des mises à jour disponibles |
+| Paramètres | Port de LibreHardwareMonitor et test de connexion, dossier des données, thème |
+
+## Capteurs : d'où viennent les mesures ?
+
+| Source | Ce qu'elle fournit | Installation |
+|---|---|---|
+| Compteurs de performance Windows (API PDH, via ctypes) | Charge GPU tous fabricants, VRAM utilisée, fréquence CPU réelle, activité/latence des disques, mémoire engagée, zones thermiques ACPI | Aucune |
+| `nvidia-smi` | Température, puissance, ventilateur, fréquences du GPU NVIDIA | Fourni avec le pilote NVIDIA |
+| [LibreHardwareMonitor](https://github.com/LibreHardwareMonitor/LibreHardwareMonitor) (optionnel) | Tout le reste : températures CPU par cœur, carte mère, SSD, ventilateurs, tensions, puissance CPU | `winget install --id LibreHardwareMonitor.LibreHardwareMonitor -e` + pilote [PawnIO](https://github.com/namazso/PawnIO.Setup/releases) |
+
+PC Insight **n'installe aucun pilote noyau** : il lit les mesures de LibreHardwareMonitor via son serveur web local (`http://127.0.0.1:8085/data.json`, à activer dans *Options → Remote Web Server → Run*). À savoir avant d'installer LibreHardwareMonitor :
+- son pilote PawnIO tourne dans le noyau (il remplace l'ancien WinRing0, vulnérable : CVE-2020-14979) ; certains anti-triche de jeux en ligne le refusent ;
+- son serveur web n'a pas de mot de passe par défaut et écoute sur toutes les interfaces : refusez l'accès réseau public dans le pare-feu ou activez son authentification.
 
 ## Lancer l'application
 
@@ -59,9 +75,11 @@ pcinsight/
 ├── api.py            routes de l'API
 ├── store.py          cache des sections (TTL, une seule collecte à la fois)
 ├── analysis.py       règles du diagnostic et calcul du score
+├── settings.py       réglages (port de LibreHardwareMonitor)
 ├── history.py        historique SQLite (agrégation par minute)
 ├── report.py         export HTML/JSON
-├── collectors/       une source de données par fichier (psutil, registre, PowerShell)
+├── collectors/       une source de données par fichier (psutil, registre, PowerShell,
+│                     compteurs PDH via ctypes, capteurs LibreHardwareMonitor / nvidia-smi)
 ├── scripts/*.ps1     requêtes WMI/CIM, journaux, Windows Update (résultat JSON)
 └── web/              interface HTML/CSS/JS + Chart.js 4.5.1 (local, licence MIT)
 ```
@@ -88,7 +106,8 @@ py -m pcinsight --selftest
 Les tests unitaires (analyse, statistiques, décodages, sécurité du serveur) tournent sur n'importe quel OS ; `--selftest` vérifie les collecteurs réels et n'a de sens que sous Windows. Le workflow `.github/workflows/windows.yml` exécute les deux sur un runner Windows, puis construit et teste l'exécutable.
 
 ## Limites connues
-- **Températures CPU/GPU et charge GPU** : non disponibles via les API Windows standard sans pilote tiers (LibreHardwareMonitor, HWiNFO). Seule la température des disques est lue (en admin).
-- La fréquence CPU affichée par Windows est souvent la fréquence de base, pas la fréquence turbo instantanée.
-- Les dates de fin de support Windows sont codées en dur (source : Microsoft Learn, novembre 2026) et devront être complétées pour les versions futures.
-- Le score de santé repose sur des seuils indicatifs ; un point « à surveiller » n'est pas forcément un problème selon l'usage.
+- **Températures du processeur et ventilateurs** : nécessitent LibreHardwareMonitor (voir plus haut). Sans lui, seule une zone thermique ACPI approximative est affichée quand Windows l'expose.
+- **Correspondance des cartes graphiques** : avec plusieurs GPU, le détail des moteurs est numéroté (« Carte graphique 1, 2 ») ; la carte qui utilise le plus de mémoire dédiée est considérée comme principale.
+- Certaines informations exigent les droits administrateur : usure/température des SSD (sans LibreHardwareMonitor), TPM, durées de démarrage, points de restauration, exclusions Defender.
+- Les dates de fin de support Windows sont codées en dur (source : Microsoft Learn, novembre 2026).
+- Le score de santé et la détection de « persistance suspecte » reposent sur des heuristiques : un signalement est une piste à vérifier, pas une preuve d'infection.

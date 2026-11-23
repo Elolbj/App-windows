@@ -11,8 +11,11 @@ CATEGORIES = {
     "storage": "Stockage",
     "security": "Sécurité",
     "stability": "Stabilité",
-    "updates": "Mises à jour",
+    "updates": "Windows et mises à jour",
 }
+# page de l'interface où se trouve le détail de chaque catégorie
+PAGES = {"performance": "performance", "storage": "storage", "security": "security",
+         "stability": "events", "updates": "updates"}
 PENALTY = {"critical": 25, "warning": 10, "info": 3, "good": 0}
 GB = 1024 ** 3
 
@@ -33,10 +36,11 @@ class Report:
         self.findings = []
         self.covered = set()
 
-    def add(self, category, severity, title, detail="", advice="", penalty=None):
+    def add(self, category, severity, title, detail="", advice="", penalty=None, page=None):
         self.covered.add(category)
         self.findings.append({
             "category": category, "severity": severity, "title": title, "detail": detail,
+            "page": page or PAGES[category],
             "advice": advice, "penalty": PENALTY[severity] if penalty is None else penalty,
         })
 
@@ -97,7 +101,7 @@ def check_performance(r: Report, system, live, history, software, hardware):
             r.add("performance", "info", "Quantité de RAM limitée",
                   f"{_fmt_bytes(system['ram_total'])} installés.",
                   "8 Go est un minimum confortable sous Windows 11, 16 Go pour le jeu ou le développement.")
-    if software:
+    if software and software.get("stats"):
         n = software["stats"]["startup_enabled"]
         if n >= 15:
             r.add("performance", "warning", "Trop de programmes au démarrage",
@@ -309,7 +313,8 @@ def check_stability(r: Report, events, hardware):
         if problems:
             r.add("stability", "warning", f"{len(problems)} périphérique(s) en erreur",
                   "; ".join(f"{p.get('name') or p.get('deviceId')} : {p['label']}" for p in problems[:4]),
-                  "Gestionnaire de périphériques (devmgmt.msc) : mettez à jour ou réinstallez le pilote.")
+                  "Gestionnaire de périphériques (devmgmt.msc) : mettez à jour ou réinstallez le pilote.",
+                  page="hardware")
 
 
 def check_updates(r: Report, system, updates):
@@ -366,9 +371,161 @@ def check_updates(r: Report, system, updates):
             r.add("updates", "info", f"{n} mise(s) à jour disponible(s)", "", "Installez-les depuis Windows Update.")
 
 
+SUSPICIOUS_DIRS = ("\\appdata\\local\\temp\\", "\\windows\\temp\\", "\\users\\public\\", "\\downloads\\",
+                   "\\$recycle.bin\\")
+USER_WRITABLE = ("\\appdata\\",) + SUSPICIOUS_DIRS
+
+
+ENV_DIRS = {"%localappdata%": "\\appdata\\local", "%appdata%": "\\appdata\\roaming",
+            "%temp%": "\\appdata\\local\\temp", "%tmp%": "\\appdata\\local\\temp", "%public%": "\\users\\public"}
+
+
+def _path_in(text, dirs):
+    t = (text or "").lower().replace("/", "\\")
+    for var, path in ENV_DIRS.items():  # variables non développées dans les commandes
+        t = t.replace(var, path)
+    return any(d in t for d in dirs)
+
+
+def check_sensors(r: Report, sensors, counters, osinfo, hardware):
+    """Températures, mémoire engagée, pagination, mode d'alimentation, démarrage."""
+    sensors = sensors or {}
+    cpu_t = sensors.get("cpu_temp") or {}
+    if cpu_t.get("value") is not None and "ACPI" not in (cpu_t.get("source") or ""):
+        t = cpu_t["value"]
+        if t >= 90:
+            r.add("performance", "warning", "Processeur très chaud",
+                  f"{t:.0f} °C mesurés ({cpu_t['source']}).",
+                  "Au-delà de 90 °C le processeur baisse sa fréquence. Dépoussiérez, vérifiez le ventirad "
+                  "et la pâte thermique (certains Ryzen 7000 / Intel 13e-14e gén. montent à 95 °C en charge par conception).",
+                  page="sensors")
+    gpu_t = sensors.get("gpu_temp") or {}
+    if gpu_t.get("value") is not None and gpu_t["value"] >= 85:
+        r.add("performance", "warning", "Carte graphique très chaude", f"{gpu_t['value']:.0f} °C mesurés.",
+              "Améliorez la ventilation du boîtier ; nettoyez les ventilateurs de la carte.", page="sensors")
+    mem = (counters or {}).get("memory") or {}
+    if mem.get("committed") and mem.get("commit_limit"):
+        ratio = mem["committed"] / mem["commit_limit"]
+        if ratio >= 0.9:
+            r.add("performance", "warning", "Mémoire engagée presque au maximum",
+                  f"{ratio * 100:.0f} % de la limite (RAM + fichier d'échange) est réservée par les programmes.",
+                  "Fermez des applications ou augmentez la RAM ; laissez Windows gérer le fichier d'échange.")
+    if (mem.get("pages_input") or 0) >= 300:
+        r.add("performance", "info", "Lecture intensive du fichier d'échange",
+              f"{mem['pages_input']:.0f} pages relues depuis le disque par seconde en ce moment.",
+              "Signe que la RAM manque pour les applications ouvertes.")
+    osinfo = osinfo or {}
+    plan = (osinfo.get("power") or {}).get("name")
+    laptop = ((hardware or {}).get("system") or {}).get("pcSystemType") == 2
+    if plan == "Économie d'énergie" and not laptop:
+        r.add("performance", "info", "Mode « Économie d'énergie » sur un PC de bureau",
+              "Le processeur est bridé pour consommer moins.",
+              "Panneau de configuration > Options d'alimentation > Utilisation normale.")
+    boots = [b["seconds"] for b in osinfo.get("boots") or [] if b.get("seconds")]
+    if len(boots) >= 3:
+        recent = sum(boots[-5:]) / len(boots[-5:])
+        if recent >= 90:
+            r.add("performance", "warning", "Démarrage de Windows lent",
+                  f"{recent:.0f} s en moyenne sur les derniers démarrages.",
+                  "Réduisez les programmes au démarrage ; un SSD divise ce temps par 3 à 5.", page="software")
+        elif recent >= 45:
+            r.add("performance", "info", "Démarrage de Windows un peu long",
+                  f"{recent:.0f} s en moyenne sur les derniers démarrages.", page="software")
+
+
+def check_persistence(r: Report, software, security, drivers):
+    """Points d'ancrage classiques des logiciels malveillants (vue « analyste »)."""
+    software = software or {}
+    for t in software.get("tasks") or []:
+        actions = " ".join(t.get("actions") or [])
+        system_account = (t.get("runAs") or "").upper() in ("SYSTEM", "NT AUTHORITY\\SYSTEM", "S-1-5-18")
+        if _path_in(actions, SUSPICIOUS_DIRS) or ((t.get("elevated") or system_account) and _path_in(actions, USER_WRITABLE)):
+            r.add("security", "warning", f"Tâche planifiée suspecte : {t.get('name')}",
+                  f"Exécute « {actions[:160]} » depuis un dossier modifiable par l'utilisateur"
+                  + (" avec des droits élevés." if t.get("elevated") or system_account else "."),
+                  "Vérifiez l'éditeur du programme (clic droit > Propriétés > Signatures numériques) ; "
+                  "supprimez la tâche si elle est inconnue (taskschd.msc).", page="software")
+    for it in software.get("startup") or []:
+        if it.get("enabled") and _path_in(it.get("command"), SUSPICIOUS_DIRS):
+            r.add("security", "warning", f"Programme au démarrage suspect : {it.get('name')}",
+                  f"Lancé depuis un dossier temporaire ou public : {it.get('command', '')[:160]}",
+                  "Analysez le fichier avec Microsoft Defender ou VirusTotal, puis désactivez l'entrée.", page="software")
+    for sv in software.get("services") or []:
+        if sv.get("third_party") and _path_in(sv.get("binpath"), USER_WRITABLE):
+            r.add("security", "warning", f"Service lancé depuis un dossier utilisateur : {sv.get('display_name')}",
+                  f"{sv.get('binpath', '')[:160]}",
+                  "Un service s'exécute avec des droits élevés : son fichier ne devrait pas être modifiable "
+                  "par un utilisateur standard.", page="software")
+    unsigned = [d for d in (drivers or {}).get("drivers") or [] if d.get("signed") is False]
+    if unsigned:
+        r.add("security", "warning", f"{len(unsigned)} pilote(s) non signé(s)",
+              ", ".join(d.get("device") or "?" for d in unsigned[:4]),
+              "Un pilote non signé s'exécute dans le noyau sans vérification : supprimez-le s'il est inconnu.",
+              page="hardware")
+    security = security or {}
+    odd_hosts = [h for h in security.get("hosts") or [] if h.get("ip") not in ("127.0.0.1", "::1", "0.0.0.0")]
+    if odd_hosts:
+        names = ", ".join(f"{' '.join(h['names'][:2])} → {h['ip']}" for h in odd_hosts[:3])
+        r.add("security", "info", "Redirections dans le fichier hosts", names,
+              "Vérifiez qu'elles sont voulues : un malware peut rediriger un site (banque, mises à jour) vers un faux serveur.")
+    proxy = security.get("proxy") or {}
+    if proxy.get("enabled") or proxy.get("pac"):
+        r.add("security", "info", "Proxy configuré pour la navigation",
+              proxy.get("server") or proxy.get("pac") or "",
+              "Normal en entreprise ; ailleurs, un proxy inconnu peut intercepter le trafic web.", penalty=0)
+    ex = security.get("exclusions") or {}
+    items = (ex.get("paths") or []) + (ex.get("processes") or []) + (ex.get("extensions") or [])
+    if items:
+        r.add("security", "info", f"{len(items)} exclusion(s) dans Microsoft Defender", ", ".join(items[:4]),
+              "Ces éléments ne sont jamais analysés : gardez uniquement les exclusions que vous avez ajoutées vous-même.",
+              penalty=0)
+    reg = security.get("registry") or {}
+    if reg.get("lsa_protection") is False:
+        r.add("security", "info", "Protection LSA désactivée",
+              "Les identifiants en mémoire (processus lsass) sont plus faciles à extraire (type Mimikatz).",
+              "Sécurité Windows > Sécurité de l'appareil > Isolation du noyau > Protection de l'autorité de sécurité locale.",
+              penalty=0)
+
+
+def check_system(r: Report, osinfo, hardware, events):
+    osinfo = osinfo or {}
+    act = osinfo.get("activation")
+    if act and act.get("status") != 1:
+        r.add("updates", "warning", "Windows n'est pas activé", f"État de la licence : {act.get('label')}.",
+              "Paramètres > Système > Activation.")
+    elif act:
+        r.add("updates", "good", "Windows activé", f"Licence {act.get('channel') or ''}".strip())
+    for g in (hardware or {}).get("gpu") or []:
+        name = g.get("name") or ""
+        if not g.get("driverDate") or any(w in name.lower() for w in ("basic", "virtual", "hyper-v", "remote")):
+            continue
+        try:
+            age = (dt.date.today() - dt.date.fromisoformat(g["driverDate"][:10])).days
+        except ValueError:
+            continue
+        if age > 365:
+            r.add("updates", "info", f"Pilote graphique ancien : {name}",
+                  f"Pilote du {_fmt_date(g['driverDate'])} (version {g.get('driverVersion')}).",
+                  "Téléchargez le dernier pilote sur le site du fabricant (NVIDIA, AMD, Intel).", page="hardware")
+    dumps = osinfo.get("minidumps") or []
+    bsod_events = ((events or {}).get("stats") or {}).get("incident_counts", {}).get("bsod", 0)
+    recent = [d for d in dumps if d.get("time", "") >= (dt.date.today() - dt.timedelta(days=30)).isoformat()]
+    if recent and not bsod_events:
+        r.add("stability", "warning", f"{len(recent)} fichier(s) de vidage d'écran bleu récents",
+              "Des minidumps ont été créés ces 30 derniers jours (C:\\Windows\\Minidump).",
+              "Analysez-les avec WinDbg (!analyze -v) ou BlueScreenView pour trouver le pilote fautif.")
+    if osinfo.get("firmware") == "BIOS (hérité)":
+        r.add("security", "info", "Démarrage en mode BIOS hérité",
+              "Secure Boot et Windows 11 nécessitent le mode UEFI.",
+              "Conversion possible sans réinstaller avec mbr2gpt, puis activer UEFI dans le BIOS.")
+
+
 def analyze(data: dict) -> dict:
     """`data` contient les sections disponibles (une section absente vaut None)."""
     r = Report()
+    check_sensors(r, data.get("sensors"), data.get("counters"), data.get("osinfo"), data.get("hardware"))
+    check_persistence(r, data.get("software"), data.get("security"), data.get("drivers"))
+    check_system(r, data.get("osinfo"), data.get("hardware"), data.get("events"))
     check_performance(r, data.get("system"), data.get("live"), data.get("history"),
                       data.get("software"), data.get("hardware"))
     check_storage(r, data.get("storage"), data.get("hardware"))

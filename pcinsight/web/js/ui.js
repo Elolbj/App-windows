@@ -55,6 +55,16 @@ const P = {
   memory: '<rect x="3" y="7" width="18" height="10" rx="1.5"/><path d="M7 7v10M11 7v10M15 7v10M19 17v2M5 17v2"/>',
   battery: '<rect x="2.5" y="7" width="17" height="10" rx="2"/><path d="M21.5 10.5v3"/>',
   logo: '<path d="M3 13h4l2.5-6 4 11 2.5-5H21"/>',
+  thermo: '<path d="M14 14.8V5a2 2 0 0 0-4 0v9.8a4 4 0 1 0 4 0z"/><path d="M12 9v7.5"/>',
+  settings: '<circle cx="12" cy="12" r="3"/><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3M5.3 5.3l2.1 2.1M16.6 16.6l2.1 2.1M5.3 18.7l2.1-2.1M16.6 7.4l2.1-2.1"/>',
+  fan: '<circle cx="12" cy="12" r="2"/><path d="M12 10c0-4 1-7 4-7s3 4-2 7M14 12c4 0 7 1 7 4s-4 3-7-2M12 14c0 4-1 7-4 7s-3-4 2-7M10 12c-4 0-7-1-7-4s4-3 7 2"/>',
+  bolt: '<path d="M13 2L4 14h7l-1 8 9-12h-7z"/>',
+  gpu: '<rect x="2" y="7" width="20" height="10" rx="2"/><circle cx="8" cy="12" r="2.5"/><circle cx="16" cy="12" r="2.5"/>',
+  task: '<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4M8 15l2 2 4-4"/>',
+  key: '<circle cx="8" cy="15" r="4"/><path d="M11 12l9-9M16 7l3 3"/>',
+  power: '<path d="M12 2v10M6.3 6.3a8 8 0 1 0 11.4 0"/>',
+  wifi: '<path d="M2 8.5a15 15 0 0 1 20 0M5 12a10 10 0 0 1 14 0M8.5 15.5a5 5 0 0 1 7 0M12 19h.01"/>',
+  link: '<path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/>',
 };
 
 export function icon(name, cls = "") {
@@ -117,9 +127,9 @@ export function fmtAgo(v) {
 export const yesNo = (v) => (v === true ? "Oui" : v === false ? "Non" : "Inconnu");
 
 // ------------------------------------------------------------------ blocs d'interface
-export function card(title, body, { sub = "", tools = "", cls = "" } = {}) {
+export function card(title, body, { sub = "", tools = "", cls = "", ico = "", tip = "" } = {}) {
   return html`<section class="card ${raw(cls)}">
-    ${title ? html`<div class="card-head"><div><h2>${title}</h2>${sub ? html`<div class="sub">${sub}</div>` : ""}</div>${tools ? html`<div class="tools">${tools}</div>` : ""}</div>` : ""}
+    ${title ? html`<div class="card-head"><div><h2>${ico ? icon(ico) : ""}${title}${tip ? help(tip) : ""}</h2>${sub ? html`<div class="sub">${sub}</div>` : ""}</div>${tools ? html`<div class="tools">${tools}</div>` : ""}</div>` : ""}
     ${body}
   </section>`;
 }
@@ -130,9 +140,10 @@ export function kv(pairs) {
   return html`<dl class="kv">${rows.map(([k, v]) => html`<dt>${k}</dt><dd>${v}</dd>`)}</dl>`;
 }
 
-export function tile(label, value, { hint = "", unit = "", ico = "", meter: m = null, id = "" } = {}) {
+export function tile(label, value, { hint = "", unit = "", ico = "", meter: m = null, id = "", tip = "", status = null } = {}) {
   return html`<div class="tile" ${id ? raw(`id="${esc(id)}"`) : ""}>
-    <div class="label">${ico ? icon(ico) : ""}${label}</div>
+    ${status ? html`<span class="chip" data-role="chip">${statusChip(status)}</span>` : ""}
+    <div class="label">${ico ? icon(ico) : ""}${label}${tip ? help(tip) : ""}</div>
     <div class="value" data-role="value">${value}${unit ? html`<small>${unit}</small>` : ""}</div>
     ${hint !== null ? html`<div class="hint" data-role="hint">${hint || raw("&nbsp;")}</div>` : ""}
     ${m !== null ? m : ""}
@@ -288,3 +299,62 @@ export class DataTable {
     if (btn) btn.addEventListener("click", () => { this.limit += this.pageSize; this.renderBody(); });
   }
 }
+
+// ------------------------------------------------------------------ lisibilité
+/** Petit « ? » qui explique un terme technique au survol. */
+export function help(text) {
+  return html`<span class="help" title="${text}" aria-label="${text}" role="img">?</span>`;
+}
+
+const CHIP = { good: ["OK", "good"], warning: ["À surveiller", "warning"], critical: ["Problème", "critical"], info: ["Info", "info"] };
+/** Pastille d'état : toujours une icône + un mot (jamais la couleur seule). */
+export function statusChip(kind, label) {
+  const [text, k] = CHIP[kind] || [kind, ""];
+  return badge(label || text, k);
+}
+
+/**
+ * Résumé en langage clair en haut de page.
+ * items : [{ kind: "good" | "warning" | "critical" | "info", title, text }]
+ */
+export function summary(items) {
+  const list = (items || []).filter(Boolean);
+  if (!list.length) return "";
+  const ico = { good: "check", warning: "alert", critical: "x", info: "info" };
+  return html`<div class="summary">${list.map((i) => html`<div class="item ${i.kind}">${icon(ico[i.kind] || "info")}<div><div class="t">${i.title}</div>${i.text ? html`<div class="d">${i.text}</div>` : ""}</div></div>`)}</div>`;
+}
+
+/** Niveau qualitatif d'une valeur selon deux seuils. */
+export function level(value, warn, crit) {
+  if (value === null || value === undefined) return null;
+  return value >= crit ? "critical" : value >= warn ? "warning" : "good";
+}
+
+export function fmtTemp(v) { return v === null || v === undefined ? "—" : `${fmtNum(v, 0)} °C`; }
+export function fmtMHz(v) { return !v ? "—" : v >= 1000 ? `${fmtNum(v / 1000, 2)} GHz` : `${fmtNum(v)} MHz`; }
+
+/** Glossaire : explications courtes réutilisées dans les infobulles. */
+export const GLOSSARY = {
+  swap: "Fichier d'échange (pagefile) : extension de la RAM sur le disque, beaucoup plus lente. S'il est très utilisé, la RAM manque.",
+  commit: "Mémoire engagée : mémoire réservée par les programmes (RAM + fichier d'échange). Au-delà de la limite, les applications plantent.",
+  cache: "Cache : RAM utilisée par Windows pour garder des fichiers récents. Elle est libérée immédiatement si un programme en a besoin.",
+  p95: "95e centile : 95 % du temps, la valeur était en dessous. Plus représentatif que le maximum, qui peut être un pic isolé.",
+  reliability: "Indice de stabilité calculé par Windows de 1 à 10 à partir des plantages, échecs et installations.",
+  workingSet: "Working set : RAM physique occupée par le processus en ce moment.",
+  diskBusy: "Taux d'activité : part du temps où le disque traite des demandes. Proche de 100 %, il ralentit tout le système.",
+  latency: "Temps de réponse moyen d'une lecture/écriture. SSD : < 1 ms. Disque dur : 5 à 15 ms. Au-delà de 50 ms, ça rame.",
+  gpuLoad: "Charge du moteur graphique le plus occupé (3D, vidéo, calcul), comme dans le Gestionnaire des tâches.",
+  realFreq: "Fréquence réelle du processeur, turbo compris (calculée à partir de « % de performance du processeur »).",
+  acpi: "Zone thermique ACPI : capteur de la carte mère exposé par Windows. Approximatif, souvent figé sur les PC de bureau.",
+  smb1: "SMBv1 : ancien protocole de partage de fichiers exploité par le rançongiciel WannaCry.",
+  nla: "NLA : authentification avant l'ouverture de la session Bureau à distance. Limite les attaques sur le port 3389.",
+  hvci: "Intégrité de la mémoire (HVCI) : empêche le chargement de pilotes non fiables dans le noyau grâce à la virtualisation.",
+  tpm: "TPM : puce de sécurité qui protège les clés de chiffrement (BitLocker, Windows Hello). Requise par Windows 11.",
+  secureBoot: "Secure Boot : l'UEFI ne démarre que des chargeurs signés, ce qui bloque les bootkits.",
+  lsa: "Protection LSA : empêche les outils comme Mimikatz de lire les mots de passe en mémoire (processus lsass).",
+  uac: "UAC : demande de confirmation avant qu'un programme obtienne les droits administrateur.",
+  persistence: "Persistance : moyens utilisés par un programme pour se relancer automatiquement (démarrage, tâches planifiées, services).",
+  hosts: "Fichier hosts : associe des noms de domaine à des adresses IP avant le DNS. Une entrée inconnue peut rediriger un site.",
+  exposed: "Exposé au réseau : le port accepte des connexions d'autres machines. Le pare-feu peut encore les bloquer.",
+  fastStartup: "Démarrage rapide : « Arrêter » met le noyau en veille prolongée au lieu de l'éteindre. Seul « Redémarrer » repart de zéro.",
+};

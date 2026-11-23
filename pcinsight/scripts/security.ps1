@@ -82,6 +82,16 @@ Section 'admins' {
     })
 }
 
+# Exclusions Defender (lisibles seulement en administrateur sur les Windows recents)
+Section 'exclusions' {
+    $p = Get-MpPreference
+    [pscustomobject]@{
+        paths      = @($p.ExclusionPath)
+        processes  = @($p.ExclusionProcess)
+        extensions = @($p.ExclusionExtension)
+    }
+}
+
 $out['errors'] = @($errors)
 $json = $out | ConvertTo-Json -Depth 5 -Compress
 [System.IO.File]::WriteAllText($OutFile, $json, (New-Object System.Text.UTF8Encoding $false))

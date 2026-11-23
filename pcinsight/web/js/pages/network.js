@@ -1,5 +1,7 @@
 import { bars, colors, legend, timeLine } from "../charts.js";
-import { DataTable, badge, card, errorBox, fmtBytes, fmtNum, fmtRate, html, kv, loading, raw, scriptNotes, setHTML, tile } from "../ui.js";
+import {
+  DataTable, GLOSSARY, badge, card, errorBox, fmtBytes, fmtNum, fmtRate, html, kv, loading, raw, scriptNotes, setHTML, summary, tile,
+} from "../ui.js";
 
 const CATEGORY = { Public: ["Public", "info"], Private: ["Privé", "good"], DomainAuthenticated: ["Domaine", "good"] };
 const STATES = { ESTABLISHED: "Établie", TIME_WAIT: "Attente (TIME_WAIT)", CLOSE_WAIT: "Fermeture (CLOSE_WAIT)", SYN_SENT: "Ouverture (SYN_SENT)", FIN_WAIT1: "FIN_WAIT1", FIN_WAIT2: "FIN_WAIT2", LAST_ACK: "LAST_ACK", NONE: "Aucun" };
@@ -27,7 +29,15 @@ export default {
     const cn = n.connections || {};
     const exposed = (cn.listening || []).filter((p) => p.exposed);
 
+    const w = n.wifi;
+    const sigKind = w && w.signal !== null ? (w.signal >= 70 ? "good" : w.signal >= 45 ? "warning" : "critical") : null;
+    const sensitive = exposed.filter((p) => p.sensitive);
     setHTML(view, html`
+      ${summary([
+        { kind: main && main.ipv4.length ? "good" : "critical", title: main && main.ipv4.length ? `Connecté via ${main.name}` : "Pas de connexion active", text: profile ? `Réseau « ${profile.network} » (profil ${(CATEGORY[profile.category] || [profile.category])[0]}), accès ${profile.ipv4 === "Internet" ? "à Internet" : profile.ipv4}.` : "" },
+        w ? { kind: sigKind || "info", title: `Wi-Fi : signal ${w.signal !== null ? `${w.signal} %` : "inconnu"}`, text: [w.band, w.radio, w.rx_rate ? `${fmtNum(w.rx_rate)} Mbit/s` : ""].filter(Boolean).join(" · ") + (sigKind === "critical" ? " — rapprochez-vous de la box ou utilisez le 2,4 GHz." : "") } : null,
+        { kind: sensitive.length ? "warning" : "good", title: `${exposed.length} port(s) ouverts sur le réseau`, text: sensitive.length ? `Dont ${sensitive.length} sensible(s) : ${[...new Set(sensitive.map((p) => p.port))].join(", ")}.` : "Aucun port sensible exposé." },
+      ])}
       <div class="grid cols-6">
         ${tile("Adresse IPv4", main && main.ipv4[0] ? main.ipv4[0] : "—", { ico: "network", hint: main ? main.name : "aucune interface active" })}
         ${tile("Passerelle", gw ? gw.nextHop : "—", { hint: gw ? gw.interface : "" })}
@@ -40,10 +50,19 @@ export default {
         ${card("Débit en direct", html`<div class="legend">${raw(legend([["Réception", c.series[2]], ["Envoi", c.series[6]]], "line"))}</div><div class="chart"><canvas id="c-net"></canvas></div>`, { cls: "span-2", sub: "3 dernières minutes" })}
         ${card("Connexions TCP", html`<div class="chart"><canvas id="c-states"></canvas></div>`, { sub: "Par état" })}
       </div>
-      <div class="grid">${card("Interfaces", html`<div id="t-if"></div>`)}</div>
+      ${w ? html`<div class="grid">${card(`Wi-Fi — ${w.ssid}`, kv([
+        ["Signal", w.signal !== null ? `${w.signal} %` : null],
+        ["Bande / canal", [w.band, w.channel ? `canal ${w.channel}` : ""].filter(Boolean).join(" · ")],
+        ["Norme", w.radio ? `${w.radio}${/ax|be/.test(w.radio) ? " (Wi-Fi 6/7)" : /ac/.test(w.radio) ? " (Wi-Fi 5)" : /n$/.test(w.radio) ? " (Wi-Fi 4)" : ""}` : null],
+        ["Débit de réception / d'émission", w.rx_rate ? `${fmtNum(w.rx_rate)} / ${fmtNum(w.tx_rate)} Mbit/s` : null],
+        ["Sécurité", [w.auth, w.cipher].filter(Boolean).join(" · ")],
+        ["Carte", w.adapter],
+        ["Point d'accès (BSSID)", w.bssid],
+      ]), { ico: "wifi", sub: "Connexion sans fil active (netsh)" })}</div>` : ""}
+      <div class="grid">${card("Interfaces", html`<div id="t-if"></div>`, { ico: "network" })}</div>
       <div class="grid">${card("Ports en écoute", html`<div id="t-ports"></div>
         <p class="notes">« Réseau » = le port accepte des connexions venant d'autres machines (le pare-feu peut encore les bloquer). « Local » = uniquement depuis ce PC. Vérification externe : nmap -sV &lt;adresse du PC&gt; depuis une autre machine du réseau.</p>`,
-        { sub: "Services qui attendent des connexions entrantes" })}</div>
+        { ico: "shield", tip: GLOSSARY.exposed, sub: "Services qui attendent des connexions entrantes" })}</div>
       <div class="grid cols-2">
         ${card("Processus les plus connectés", html`<div class="chart"><canvas id="c-proc"></canvas></div>`, { sub: "Connexions TCP établies" })}
         ${card("Configuration", html`${kv([

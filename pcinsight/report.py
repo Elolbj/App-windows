@@ -47,6 +47,8 @@ def build_html(data: dict) -> str:
     upd = data.get("updates") or {}
     ev = data.get("events") or {}
     sw = data.get("software") or {}
+    osi = data.get("osinfo") or {}
+    sens = data.get("sensors") or {}
     now = dt.datetime.now().strftime("%d/%m/%Y à %H:%M")
 
     parts = [f"<h1>Rapport {APP_NAME}</h1><p class='muted'>{_e(system.get('hostname'))} — généré le {now}</p>"]
@@ -77,7 +79,17 @@ def build_html(data: dict) -> str:
         ("Mémoire", f"{_bytes(mem.get('total') or system.get('ram_total'))} ({len(mem.get('modules') or [])} barrette(s))"),
         ("Carte mère", f"{(hw.get('board') or {}).get('manufacturer', '')} {(hw.get('board') or {}).get('product', '')}"),
         ("BIOS", (hw.get("bios") or {}).get("version")),
+        ("Firmware", osi.get("firmware")),
+        ("Activation", (osi.get("activation") or {}).get("label")),
+        ("Mode d'alimentation", (osi.get("power") or {}).get("name")),
+        ("Démarrage rapide", {True: "Activé", False: "Désactivé"}.get(osi.get("fast_startup"))),
     ]))
+    if sens:
+        labels = {"cpu_temp": "Température CPU (°C)", "gpu_temp": "Température GPU (°C)", "gpu_load": "Charge GPU (%)",
+                  "cpu_power": "Puissance CPU (W)", "gpu_power": "Puissance GPU (W)", "fan_max": "Ventilateur le plus rapide (tr/min)",
+                  "disk_temp": "Disque le plus chaud (°C)"}
+        parts.append("<h2>Capteurs (au moment de l'export)</h2>" + _kv(
+            [(labels.get(k, k), f"{v['value']} — {v['source']}") for k, v in sens.items()]))
 
     parts.append("<h2>Stockage</h2>" + _table(
         ["Volume", "Nom", "Système de fichiers", "Taille", "Libre", "Utilisé"],
@@ -114,6 +126,13 @@ def build_html(data: dict) -> str:
         ["Source", "ID", "Occurrences", "Dernière", "Message"],
         [[g.get("source"), g.get("id"), g.get("count"), (g.get("last") or "")[:16].replace("T", " "),
           (g.get("message") or "")[:160]] for g in (es.get("top_groups") or [])[:15]]))
+
+    tasks = sw.get("tasks") or []
+    if tasks:
+        parts.append(f"<h2>Tâches planifiées hors Microsoft ({len(tasks)})</h2>" + _table(
+            ["Tâche", "État", "Déclencheurs", "Action"],
+            [[(t.get("path") or "") + (t.get("name") or ""), t.get("state"), ", ".join(t.get("triggers") or []),
+              " ; ".join(t.get("actions") or [])[:200]] for t in tasks]))
 
     parts.append(f"<h2>Logiciels installés ({len(sw.get('programs') or [])})</h2>" + _table(
         ["Nom", "Version", "Éditeur", "Installé le", "Taille"],

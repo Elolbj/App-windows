@@ -1,7 +1,9 @@
 """État de sécurité : antivirus, pare-feu, UAC, Secure Boot, BitLocker, RDP, SMBv1, comptes."""
 
+import os
+
 from ..ps import as_list, run_script
-from ..winutil import HKLM, VIEW_64, reg_key_exists, reg_value
+from ..winutil import HKCU, HKLM, VIEW_64, reg_key_exists, reg_value
 
 POLICIES = r"SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System"
 
@@ -31,6 +33,7 @@ def registry_checks() -> dict:
     smb1_server = reg_value(HKLM, r"SYSTEM\CurrentControlSet\Services\LanmanServer\Parameters", "SMB1", None, VIEW_64)
     smb1_driver = reg_key_exists(HKLM, r"SYSTEM\CurrentControlSet\Services\mrxsmb10", VIEW_64)
     smb1_start = reg_value(HKLM, r"SYSTEM\CurrentControlSet\Services\mrxsmb10", "Start", None, VIEW_64)
+    lsa_ppl = reg_value(HKLM, r"SYSTEM\CurrentControlSet\Control\Lsa", "RunAsPPL", None, VIEW_64)
     vbs = reg_value(HKLM, r"SYSTEM\CurrentControlSet\Control\DeviceGuard", "EnableVirtualizationBasedSecurity", None, VIEW_64)
     hvci = reg_value(HKLM, r"SYSTEM\CurrentControlSet\Control\DeviceGuard\Scenarios\HypervisorEnforcedCodeIntegrity",
                      "Enabled", None, VIEW_64)
@@ -44,7 +47,42 @@ def registry_checks() -> dict:
         "smb1_server": smb1_server == 1,
         "vbs": None if vbs is None else vbs == 1,
         "memory_integrity": None if hvci is None else hvci == 1,
+        "lsa_protection": None if lsa_ppl is None else lsa_ppl in (1, 2),
     }
+
+
+def hosts_entries() -> list:
+    """Lignes actives du fichier hosts (une redirection de domaine peut cacher un détournement)."""
+    path = os.path.join(os.environ.get("SystemRoot", r"C:\Windows"), "System32", "drivers", "etc", "hosts")
+    out = []
+    try:
+        with open(path, encoding="utf-8", errors="replace") as f:
+            for line in f:
+                line = line.split("#", 1)[0].strip()
+                parts = line.split()
+                if len(parts) >= 2:
+                    out.append({"ip": parts[0], "names": parts[1:]})
+    except OSError:
+        pass
+    return out[:200]
+
+
+def proxy_settings() -> dict:
+    key = r"Software\Microsoft\Windows\CurrentVersion\Internet Settings"
+    return {
+        "enabled": reg_value(HKCU, key, "ProxyEnable", 0) == 1,
+        "server": reg_value(HKCU, key, "ProxyServer", None),
+        "pac": reg_value(HKCU, key, "AutoConfigURL", None),
+    }
+
+
+def clean_exclusions(raw) -> dict:
+    """Sans droits admin, Windows renvoie « N/A: Must be an administrator... » au lieu de la liste."""
+    if not raw:
+        return {"visible": False, "paths": [], "processes": [], "extensions": []}
+    hidden = any(str(v).startswith("N/A") for k in ("paths", "processes", "extensions") for v in as_list(raw.get(k)))
+    pick = lambda k: [v for v in as_list(raw.get(k)) if v and not str(v).startswith("N/A")]  # noqa: E731
+    return {"visible": not hidden, "paths": pick("paths"), "processes": pick("processes"), "extensions": pick("extensions")}
 
 
 def collect() -> dict:
@@ -81,5 +119,8 @@ def collect() -> dict:
         "users": users,
         "admins": as_list(raw.get("admins")),
         "registry": registry_checks(),
+        "exclusions": clean_exclusions(raw.get("exclusions")),
+        "hosts": hosts_entries(),
+        "proxy": proxy_settings(),
         "errors": as_list(raw.get("errors")),
     }

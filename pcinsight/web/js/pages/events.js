@@ -1,5 +1,7 @@
 import { bars, colors, legend, timeLine } from "../charts.js";
-import { DataTable, badge, bindSeg, card, errorBox, fmtDateTime, fmtNum, html, loading, raw, scriptNotes, seg, setHTML, tile } from "../ui.js";
+import {
+  DataTable, GLOSSARY, badge, bindSeg, card, errorBox, fmtDate, fmtDateTime, fmtNum, html, loading, raw, scriptNotes, seg, setHTML, summary, tile,
+} from "../ui.js";
 
 const LEVEL = { 1: ["Critique", "critical"], 2: ["Erreur", "serious"], 3: ["Avertissement", "warning"] };
 const KIND_LABEL = {
@@ -84,14 +86,20 @@ export default {
       const relLast = rel.length ? rel[rel.length - 1].index : st.reliability_last;
       const body = view.querySelector("#body");
 
+      const periodLabel = days === 1 ? "24 heures" : `${days} jours`;
       setHTML(body, html`
+        ${summary([
+          { kind: unexpected ? "warning" : "good", title: unexpected ? `${unexpected} arrêt(s) brutal(aux) ou écran(s) bleu(s)` : "Aucun plantage du système", text: unexpected ? "Voir « Incidents système » ci-dessous." : `Sur les ${periodLabel}.` },
+          { kind: crashCount >= 10 ? "warning" : crashCount ? "info" : "good", title: crashCount ? `${crashCount} plantage(s) d'applications` : "Aucune application n'a planté", text: agg.crashes[0] ? `La plus concernée : ${agg.crashes[0][0]} (${agg.crashes[0][1]}).` : "" },
+          { kind: "info", title: `${fmtNum((count(1) + count(2)) / days, 1)} erreur(s) par jour en moyenne`, text: "La plupart des erreurs Windows sont bénignes : regardez surtout leur évolution et les incidents ci-dessous." },
+        ])}
         <div class="grid cols-6">
           ${tile("Critiques", fmtNum(count(1)), { hint: "niveau 1" })}
           ${tile("Erreurs", fmtNum(count(2)), { hint: `${fmtNum(count(2) / days, 1)} par jour` })}
           ${tile("Avertissements", fmtNum(count(3)), { hint: `${fmtNum(count(3) / days, 1)} par jour` })}
           ${tile("Plantages d'applications", fmtNum(crashCount), { hint: agg.crashes[0] ? `surtout ${agg.crashes[0][0]}` : "aucun" })}
           ${tile("Arrêts brutaux / écrans bleus", fmtNum(unexpected), { hint: unexpected ? "voir incidents" : "aucun" })}
-          ${tile("Indice de fiabilité", relLast !== null && relLast !== undefined ? fmtNum(relLast, 1) : "—", { unit: relLast !== null && relLast !== undefined ? "/10" : "", hint: "calculé par Windows" })}
+          ${tile("Indice de fiabilité", relLast !== null && relLast !== undefined ? fmtNum(relLast, 1) : "—", { unit: relLast !== null && relLast !== undefined ? "/10" : "", hint: "calculé par Windows", tip: GLOSSARY.reliability })}
         </div>
         <div class="grid cols-3">
           ${card(agg.hourly ? "Événements par heure" : "Événements par jour", html`<div class="legend">${raw(legend([["Critique", c.critical], ["Erreur", c.serious], ["Avertissement", c.warning]]))}</div><div class="chart"><canvas id="c-days"></canvas></div>`, { cls: "span-2" })}
@@ -101,7 +109,11 @@ export default {
           ${card("Indice de stabilité", html`<div class="chart"><canvas id="c-rel"></canvas></div>`, { cls: "span-2", sub: "Moniteur de fiabilité Windows (10 = aucun incident)" })}
           ${card("Applications qui plantent", agg.crashes.length ? html`<div class="chart"><canvas id="c-crash"></canvas></div>` : html`<div class="empty">Aucun plantage d'application sur la période.</div>`, { sub: "Événements 1000 / 1002" })}
         </div>
-        <div class="grid">${card("Incidents système", html`<div id="t-inc"></div>`, { sub: "Écrans bleus, arrêts inattendus, erreurs disque et matérielles" })}</div>
+        <div class="grid cols-2">
+          ${card("Durée des démarrages", html`<div class="chart"><canvas id="c-boot"></canvas></div>`, { ico: "power", sub: "Secondes jusqu'au bureau utilisable (journal Diagnostics-Performance)" })}
+          ${card("Démarrages par jour", html`<div class="chart"><canvas id="c-bootday"></canvas></div>`, { ico: "clock", sub: "Mises en route du système (événement 6005)" })}
+        </div>
+        <div class="grid">${card("Incidents système", html`<div id="t-inc"></div>`, { ico: "alert", sub: "Écrans bleus, arrêts inattendus, erreurs disque et matérielles" })}</div>
         <div class="grid">${card("Événements les plus fréquents", html`<div id="t-groups"></div>`, { sub: "Regroupés par source et identifiant" })}</div>
         <div class="grid">${card("Tous les événements", html`<div id="t-all"></div>`)}</div>`);
 
@@ -132,6 +144,25 @@ export default {
       } else {
         relCanvas.parentElement.outerHTML = '<div class="empty">Indice indisponible (service « Analyse de fiabilité » désactivé ou historique vide).</div>';
       }
+
+      const bootDays = (st.boots_per_day || []).filter(([d]) => new Date(`${d}T00:00:00`).getTime() >= since - 86400000);
+      if (bootDays.length) {
+        charts.push(ctx.chart(bars(body.querySelector("#c-bootday"), {
+          labels: bootDays.map(([d]) => fmtDate(d).slice(0, 5)), datasets: [{ label: "Démarrages", data: bootDays.map(([, n]) => n), color: c.series[6] }], maxTicks: 12,
+        })));
+      } else {
+        body.querySelector("#c-bootday").parentElement.outerHTML = '<div class="empty">Aucun démarrage enregistré sur la période.</div>';
+      }
+      const bootCanvas = body.querySelector("#c-boot");
+      ctx.api.section("osinfo").then(({ data: o }) => {
+        const boots = (o.boots || []).slice(-15);
+        if (!ctx.alive() || !bootCanvas.isConnected) return;
+        if (!boots.length) { bootCanvas.parentElement.outerHTML = '<div class="empty">Durées indisponibles (journal réservé aux administrateurs).</div>'; return; }
+        charts.push(ctx.chart(bars(bootCanvas, {
+          labels: boots.map((b) => fmtDate(b.time).slice(0, 5)), datasets: [{ label: "Durée", data: boots.map((b) => b.seconds), color: c.series[0] }],
+          format: (v) => `${fmtNum(v, 0)} s`,
+        })));
+      }).catch(() => { if (bootCanvas.isConnected) bootCanvas.parentElement.outerHTML = '<div class="empty">Durées indisponibles.</div>'; });
 
       new DataTable(body.querySelector("#t-inc"), {
         rows: incidents, search: false, sortKey: "time", sortDir: "desc", empty: "Aucun incident système sur la période.",

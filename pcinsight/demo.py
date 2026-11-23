@@ -129,13 +129,16 @@ def software():
     for n in names:
         start = rnd.choice(["automatic", "automatic", "manual", "manual", "disabled"])
         status = "running" if start == "automatic" and rnd.random() > 0.15 else ("stopped" if start != "manual" or rnd.random() > 0.3 else "running")
-        services.append({"name": n, "display_name": n, "status": status, "start_type": start, "user": "LocalSystem"})
+        third = n in ("edgeupdate", "gupdate", "MSI_Center_Service", "LGHUBUpdaterService", "VBoxSDS", "com.docker.service")
+        binpath = (rf'"C:\Program Files\{n}\{n}.exe"' if third else r"C:\WINDOWS\system32\svchost.exe -k netsvcs")
+        services.append({"name": n, "display_name": n, "status": status, "start_type": start, "user": "LocalSystem",
+                         "binpath": binpath, "third_party": third and n not in ("edgeupdate",)})
     store = [{"name": n, "version": "1.0.0.0", "publisher": "CN=Microsoft Corporation", "signature": "Store",
               "nonRemovable": False} for n in ("Microsoft.WindowsCalculator", "Microsoft.WindowsTerminal",
                                                 "Microsoft.Paint", "Microsoft.ScreenSketch", "Microsoft.WindowsNotepad",
                                                 "SpotifyAB.SpotifyMusic", "5319275A.WhatsAppDesktop")]
     return {"programs": programs, "startup": startup, "services": services, "store": store,
-            "stats": sw_mod.summarize(programs, startup, services), "errors": []}
+            "tasks": scheduled_tasks(), "stats": sw_mod.summarize(programs, startup, services), "errors": []}
 
 
 def security():
@@ -162,7 +165,10 @@ def security():
                    {"name": "PC-DEMO\\demo", "type": "Utilisateur", "source": "Local"}],
         "registry": {"uac_enabled": True, "uac_never_notify": False, "rdp_enabled": False, "rdp_nla": True,
                      "secure_boot": True, "smb1_client": False, "smb1_server": False, "vbs": None,
-                     "memory_integrity": True},
+                     "memory_integrity": True, "lsa_protection": False},
+        "exclusions": {"visible": False, "paths": [], "processes": [], "extensions": []},
+        "hosts": [{"ip": "127.0.0.1", "names": ["kubernetes.docker.internal"]}],
+        "proxy": {"enabled": False, "server": None, "pac": None},
         "errors": ["tpm: Accès refusé (droits administrateur requis)"],
     }
 
@@ -276,3 +282,142 @@ def patch_system(info: dict) -> dict:
                        "support": support_status("Windows 11 Pro", "25H2", "Professional")}
     info["reboot_pending"] = []
     return info
+
+
+# --------------------------------------------------------------------------- v1.1 : capteurs et compléments
+import math  # noqa: E402
+import time  # noqa: E402
+
+
+def _wave(period, lo, hi, phase=0.0):
+    x = (math.sin(time.time() / period + phase) + 1) / 2
+    return lo + (hi - lo) * x
+
+
+class DemoCounters:
+    """Imite les compteurs PDH de Windows (charge GPU, fréquence réelle, disques...)."""
+
+    available = {"cpu_perf": True, "gpu_engine": True, "disk_idle": True, "thermal": False}
+
+    def sample(self):
+        gpu3d = _wave(23, 3, 55)
+        return {
+            "cpu_mhz": round(_wave(11, 3700, 4600)),
+            "gpus": [{"luid": "0x00000000_0x0001a2b3", "load": round(gpu3d, 1),
+                      "engines": {"3D": round(gpu3d, 1), "Décodage vidéo": round(_wave(31, 0, 12), 1), "Copie": 0.4},
+                      "dedicated": int(_wave(40, 2.1, 3.4) * GB), "shared": 210 * 1024 ** 2}],
+            "gpu": round(gpu3d, 1), "gpu_mem": int(_wave(40, 2.1, 3.4) * GB),
+            "disks": [{"name": "0 C:", "busy": round(_wave(7, 0, 18), 1), "latency_ms": 0.4, "queue": 0},
+                      {"name": "1 D:", "busy": round(_wave(13, 0, 6), 1), "latency_ms": 9.8, "queue": 0}],
+            "disk_busy": round(_wave(7, 0, 18), 1),
+            "memory": {"committed": 14.2 * GB, "commit_limit": 36.8 * GB, "cache": 5.1 * GB,
+                       "pool_paged": 610 * 1024 ** 2, "pool_nonpaged": 420 * 1024 ** 2, "pages_input": _wave(9, 0, 4)},
+            "queue": 0, "handles": 98500, "threads": 2840,
+        }
+
+    def close(self):
+        pass
+
+
+def sensors_lhm():
+    t1, t2 = _wave(17, 44, 63), _wave(23, 38, 67)
+    s = []
+
+    def add(hw, kind, name, stype, value, unit, lo=None, hi=None):
+        s.append({"id": f"/{kind}/0/{stype.lower()}/{len(s)}", "name": name, "type": stype, "value": round(value, 1),
+                  "min": round(lo if lo is not None else value * 0.7, 1), "max": round(hi if hi is not None else value * 1.25, 1),
+                  "unit": unit, "hardware": hw, "kind": kind})
+
+    cpu = "AMD Ryzen 5 5600X"
+    add(cpu, "cpu", "Core (Tctl/Tdie)", "Temperature", t1, "°C", 34, 81)
+    for i in range(6):
+        add(cpu, "cpu", f"Core #{i + 1}", "Clock", _wave(9, 3700, 4650, i), "MHz")
+        add(cpu, "cpu", f"Core #{i + 1}", "Load", _wave(5, 2, 40, i), "%")
+    add(cpu, "cpu", "Package", "Power", _wave(13, 28, 76), "W", 21, 88)
+    add(cpu, "cpu", "Core (SVI2 TFN)", "Voltage", _wave(9, 1.05, 1.42), "V")
+    board = "MSI B550-A PRO (MS-7C56)"
+    add(board, "board", "CPU Fan", "Fan", _wave(17, 820, 1350), "tr/min")
+    add(board, "board", "System Fan #1", "Fan", 640, "tr/min")
+    add(board, "board", "System Fan #2", "Fan", 655, "tr/min")
+    add(board, "board", "Chipset", "Temperature", 47.0, "°C")
+    add(board, "board", "+12V", "Voltage", 12.07, "V")
+    gpu = "NVIDIA GeForce RTX 3060"
+    add(gpu, "gpu", "GPU Core", "Temperature", t2, "°C", 33, 74)
+    add(gpu, "gpu", "GPU Hot Spot", "Temperature", t2 + 11, "°C")
+    add(gpu, "gpu", "GPU Core", "Load", _wave(23, 3, 55), "%")
+    add(gpu, "gpu", "GPU Package", "Power", _wave(23, 18, 150), "W")
+    add(gpu, "gpu", "GPU", "Fan", _wave(23, 0, 1700), "tr/min")
+    ram = "Mémoire générique"
+    add(ram, "memory", "Memory", "Load", 34.0, "%")
+    for disk, temp in (("Samsung SSD 980 PRO 1TB", 41.0), ("ST2000DM008-2FR102", 36.0)):
+        add(disk, "storage", "Temperature", "Temperature", temp, "°C")
+    hw = [{"name": n, "id": f"/{k}/0", "kind": k} for n, k in
+          ((cpu, "cpu"), (board, "board"), (gpu, "gpu"), (ram, "memory"),
+           ("Samsung SSD 980 PRO 1TB", "storage"), ("ST2000DM008-2FR102", "storage"))]
+    return {"version": "0.9.6", "hardware": hw, "sensors": s}
+
+
+def sensors_nvidia():
+    return [{"name": "NVIDIA GeForce RTX 3060", "temp": round(_wave(23, 38, 67)), "load": round(_wave(23, 3, 55)),
+             "mem_load": 12, "mem_used": 2.6 * GB, "mem_total": 12 * GB, "power": round(_wave(23, 18, 150), 1),
+             "power_limit": 170.0, "fan": round(_wave(23, 0, 52)), "clock": 1777, "mem_clock": 7501,
+             "pstate": "P2", "driver": "581.57"}]
+
+
+def osinfo():
+    now = _now()
+    boots = []
+    for i in range(12):
+        sec = 18 + (i % 4) * 3.5 + (25 if i == 7 else 0)
+        boots.append({"time": _iso(now - dt.timedelta(days=30 - i * 2.5)), "bootMs": int(sec * 1000),
+                      "mainPathMs": int(sec * 600), "postBootMs": int(sec * 400), "seconds": round(sec, 1)})
+    return {
+        "activation": {"status": 1, "label": "Activé", "channel": "Retail", "name": "Windows(R), Professional edition"},
+        "boots": boots,
+        "restore_points": [{"description": "Installed NVIDIA App", "time": _iso(now - dt.timedelta(days=12))},
+                           {"description": "Windows Modules Installer", "time": _iso(now - dt.timedelta(days=40))}],
+        "timezone": "(UTC+01:00) Bruxelles, Copenhague, Madrid, Paris",
+        "power": {"guid": "381b4222-f694-41f0-9685-ff5bb260df2e", "name": "Utilisation normale", "mode": "Équilibré"},
+        "minidumps": [],
+        "fast_startup": True, "hibernation": True, "firmware": "UEFI",
+        "errors": [],
+    }
+
+
+def drivers():
+    rows = [
+        ("NVIDIA GeForce RTX 3060", "DISPLAY", "NVIDIA", "32.0.15.8157", "2026-09-18", True),
+        ("Realtek PCIe 2.5GbE Family Controller", "NET", "Realtek", "10.68.1003.2023", "2023-10-03", True),
+        ("Intel(R) Wi-Fi 6 AX200 160MHz", "NET", "Intel", "23.60.1.2", "2024-06-04", True),
+        ("Realtek High Definition Audio", "MEDIA", "Realtek Semiconductor Corp.", "6.0.9600.1", "2023-03-16", True),
+        ("NVIDIA High Definition Audio", "MEDIA", "NVIDIA Corporation", "1.4.3.2", "2025-02-11", True),
+        ("AMD GPIO Controller", "SYSTEM", "Advanced Micro Devices, Inc", "2.2.0.130", "2022-08-17", True),
+        ("AMD PSP 11.0 Device", "SECURITYDEVICES", "Advanced Micro Devices Inc.", "5.24.0.0", "2023-04-20", True),
+        ("VirtualBox NDIS6 Bridged Networking Driver", "NETSERVICE", "Oracle Corporation", "7.1.4.165100", "2024-10-15", True),
+        ("Npcap Packet Driver (NPCAP)", "NET", "Insecure.Com LLC.", "13.51.42.926", "2024-09-26", True),
+        ("Logitech G HUB Virtual Bus Enumerator", "SYSTEM", "Logitech", "2023.7.7.0", "2023-07-07", True),
+    ]
+    return {"total": 412, "drivers": [{"device": d, "class": c, "provider": p, "version": v, "date": f"{date}T00:00:00",
+                                       "signed": s, "signer": "Microsoft Windows Hardware Compatibility Publisher", "inf": "oem12.inf"}
+                                      for d, c, p, v, date, s in rows], "errors": []}
+
+
+def scheduled_tasks():
+    now = _now()
+    rows = [
+        ("GoogleUpdateTaskMachineCore", "\\", "Ready", ["Au démarrage", "Quotidien"], r'"C:\Program Files (x86)\Google\Update\GoogleUpdate.exe" /c', "SYSTEM", True),
+        ("MicrosoftEdgeUpdateTaskMachineUA", "\\", "Ready", ["Quotidien"], r"C:\Program Files (x86)\Microsoft\EdgeUpdate\MicrosoftEdgeUpdate.exe /ua /installsource scheduler", "SYSTEM", True),
+        ("NvTmRep_CrashReport1", "\\NVIDIA\\", "Ready", ["Quotidien"], r"C:\Program Files\NVIDIA Corporation\NvContainer\NvTmRep.exe", "demo", False),
+        ("OneDrive Reporting Task", "\\", "Ready", ["Une fois"], r"%localappdata%\Microsoft\OneDrive\OneDriveStandaloneUpdater.exe /reporting", "demo", False),
+        ("MSI Task Host - LEDKeeper", "\\", "Disabled", ["À l'ouverture de session"], r"C:\Program Files (x86)\MSI\One Dragon Center\LEDKeeper.exe", "SYSTEM", True),
+    ]
+    return [{"name": n, "path": p, "state": st, "author": None, "actions": [a], "triggers": tr, "runAs": ra,
+             "runLevel": "Highest" if el else "Limited", "elevated": el,
+             "lastRun": _iso(now - dt.timedelta(hours=5)), "nextRun": _iso(now + dt.timedelta(hours=19)), "lastResult": 0}
+            for n, p, st, tr, a, ra, el in rows]
+
+
+def wifi():
+    return {"ssid": "Livebox-A1B2", "signal": 78, "bssid": "aa:bb:cc:11:22:33", "radio": "802.11ax", "band": "5 GHz",
+            "channel": "36", "auth": "WPA3-Personnel", "cipher": "CCMP", "state": "connecté",
+            "adapter": "Intel(R) Wi-Fi 6 AX200 160MHz", "rx_rate": 1201.0, "tx_rate": 960.0}
